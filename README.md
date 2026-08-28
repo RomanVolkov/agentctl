@@ -10,9 +10,9 @@
 
 ## Overview
 
-`agentctl` is a Rust CLI that manages AI agent harness configurations from a single
-declarative `workspace.toml`. It reads one source of truth and compiles it into the
-native config directories each harness expects, so the same setup works across tools
+`agentctl` is a command-line tool that manages AI agent harness configurations from a
+single declarative `workspace.toml`. It reads one source of truth and compiles it into
+the native config directories each harness expects, so the same setup works across tools
 and machines.
 
 The tool follows a Terraform-like workflow: `validate` checks the workspace, `preview`
