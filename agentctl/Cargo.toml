@@ -1,0 +1,21 @@
+[package]
+name = "agentctl"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Declarative IaC for AI agent harness configurations"
+
+[dependencies]
+agentctl-core = { path = "../agentctl-core" }
+anyhow.workspace = true
+clap.workspace = true
+colored.workspace = true
+serde_json.workspace = true
+shellexpand.workspace = true
+similar.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+insta.workspace = true
+tempfile = "3"
