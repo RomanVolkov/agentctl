@@ -58,14 +58,16 @@ jobs:
 
   publish-crates:
     needs: create-release
-    if: ${{ secrets.CRATES_IO_TOKEN != '' }}
     runs-on: ubuntu-latest
+    env:
+      CRATES_IO_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.85.0
-      - uses: taiki-e/publish-crates-action@v1
+      - if: ${{ env.CRATES_IO_TOKEN != '' }}
+        uses: taiki-e/publish-crates-action@v1
         with:
-          token: ${{ secrets.CRATES_IO_TOKEN }}
+          token: ${{ env.CRATES_IO_TOKEN }}
           check-repo: false
