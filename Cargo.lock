@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "agentctl"
-version = "0.1.0"
+version = "1.0.1"
 dependencies = [
  "agentctl-core",
  "anyhow",
@@ -20,7 +20,7 @@ dependencies = [
 
 [[package]]
 name = "agentctl-core"
-version = "0.1.0"
+version = "1.0.1"
 dependencies = [
  "insta",
  "serde",
