@@ -1,0 +1,71 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      release_id: ${{ steps.create.outputs.id }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: taiki-e/create-gh-release-action@v1
+        id: create
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  upload-assets:
+    needs: create-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            archive: tar.gz
+          - target: aarch64-unknown-linux-gnu
+            archive: tar.gz
+          - target: x86_64-apple-darwin
+            archive: tar.gz
+          - target: aarch64-apple-darwin
+            archive: tar.gz
+          - target: x86_64-pc-windows-msvc
+            archive: zip
+          - target: aarch64-pc-windows-msvc
+            archive: zip
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.85.0
+          targets: ${{ matrix.target }}
+      - uses: taiki-e/upload-rust-binary-action@v1
+        with:
+          bin: agentctl
+          target: ${{ matrix.target }}
+          archive: $bin-$tag-$target
+          args: --locked
+          checksum: sha256
+          release_id: ${{ needs.create-release.outputs.release_id }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  publish-crates:
+    needs: create-release
+    if: ${{ secrets.CRATES_IO_TOKEN != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.85.0
+      - uses: taiki-e/publish-crates-action@v1
+        with:
+          token: ${{ secrets.CRATES_IO_TOKEN }}
+          check-repo: false
