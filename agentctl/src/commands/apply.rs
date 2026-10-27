@@ -47,7 +47,7 @@ fn has_changes(hr: &common::HarnessRender) -> bool {
         let target_dir = hr.dir.join(&t.target_relative_dir);
         crate::output::tree_differs(&t.source_dir, &target_dir)
             != crate::output::tree_differs::TreeStatus::Same
-    })
+    }) || !common::stale_skill_dirs(hr).is_empty()
 }
 
 fn confirm() -> anyhow::Result<bool> {
@@ -86,8 +86,14 @@ fn apply_harness(hr: &common::HarnessRender) -> anyhow::Result<()> {
         }
         atomic_write(&target, &file.content)?;
     }
+    for stale in common::stale_skill_dirs(hr) {
+        std::fs::remove_dir_all(&stale)?;
+    }
     for tree in &hr.rendered.copied_trees {
         let target_dir = hr.dir.join(&tree.target_relative_dir);
+        if target_dir.exists() {
+            std::fs::remove_dir_all(&target_dir)?;
+        }
         copy_tree(&tree.source_dir, &target_dir)?;
     }
     Ok(())
@@ -113,11 +119,12 @@ fn copy_tree(src: &Path, dst: &Path) -> anyhow::Result<()> {
     std::fs::create_dir_all(dst)?;
     for entry in std::fs::read_dir(src)? {
         let entry = entry?;
+        let file_type = entry.file_type()?;
         let from = entry.path();
         let to = dst.join(entry.file_name());
-        if from.is_dir() {
+        if file_type.is_dir() {
             copy_tree(&from, &to)?;
-        } else {
+        } else if file_type.is_file() {
             std::fs::copy(&from, &to)?;
         }
     }

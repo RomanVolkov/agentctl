@@ -64,9 +64,40 @@ pub fn print_rendered(hr: &HarnessRender) {
         let target_dir = hr.dir.join(&tree.target_relative_dir);
         output::print_tree_changes(&tree.source_dir, &target_dir);
     }
+    for stale in stale_skill_dirs(hr) {
+        println!(
+            "  {}",
+            format!("[remove] {}", stale.display()).red().bold()
+        );
+    }
     for msg in &hr.rendered.unrendered {
         println!("  {} {}", "// not rendered:".yellow(), msg.yellow());
     }
+}
+
+pub fn stale_skill_dirs(hr: &HarnessRender) -> Vec<PathBuf> {
+    let skills_root = hr.dir.join("skills");
+    let Ok(entries) = std::fs::read_dir(&skills_root) else {
+        return Vec::new();
+    };
+    let expected: std::collections::HashSet<std::ffi::OsString> = hr
+        .rendered
+        .copied_trees
+        .iter()
+        .filter_map(|t| t.target_relative_dir.file_name().map(|n| n.to_os_string()))
+        .collect();
+
+    let mut stale = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        if path.is_dir() && !name_str.starts_with('.') && !expected.contains(&name) {
+            stale.push(path);
+        }
+    }
+    stale.sort();
+    stale
 }
 
 pub fn expand_dir(path: &std::path::Path) -> anyhow::Result<PathBuf> {

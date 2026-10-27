@@ -142,9 +142,9 @@ agentctl/
 | Provider  | Rendered files           | Notes                                |
 |-----------|--------------------------|--------------------------------------|
 | `opencode`| `opencode.jsonc`, `system_prompt.md`, `skills/` | Provider config managed manually for now |
-| `agy`     | `settings.json`, `skills/` | `system_prompt`/`require_approval` not emitted |
-| `claude`  | `settings.json`, `skills/` | Guardrails map to `permissions.allow`/`ask` |
-| `codex`   | `config.toml`, `skills/` | Guardrails approximated by `approval_policy`/`sandbox_mode` |
+| `agy`     | `settings.json`, `AGENTS.md`, `hooks.json`, `skills/` | Guardrails map to `permissions.allow`/`ask`; `extra.hooks` emits `hooks.json` |
+| `claude`  | `settings.json`, `CLAUDE.md`, `skills/` | Guardrails map to `permissions.allow`/`ask`; `extra` keys (including `hooks`) pass through |
+| `codex`   | `config.toml`, `AGENTS.md`, `skills/` | Guardrails approximated by `approval_policy`/`sandbox_mode` |
 
 Primitives a harness cannot express are reported as `// not rendered: ...` notices during `preview`.
 

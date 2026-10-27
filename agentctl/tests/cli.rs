@@ -257,3 +257,28 @@ config_path = "{}"
         .unwrap();
     assert!(out.status.success(), "apply failed: {}", String::from_utf8_lossy(&out.stderr));
 }
+
+#[test]
+fn apply_prunes_stale_skills_from_harness() {
+    let (dir, skill_src) = setup();
+    let harness_dir = dir.path().join("harness");
+    let stale_skill = harness_dir.join("skills/obsolete-skill");
+    std::fs::create_dir_all(&stale_skill).unwrap();
+    std::fs::write(stale_skill.join("SKILL.md"), "# old\n").unwrap();
+    write(
+        dir.path(),
+        "workspace.toml",
+        &workspace_toml(&harness_dir.display().to_string(), &skill_src.display().to_string()),
+    );
+
+    let out = Command::new(bin())
+        .arg("apply")
+        .arg("--yes")
+        .arg("-c")
+        .arg(dir.path().join("workspace.toml"))
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "apply failed: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(!stale_skill.exists(), "stale skill directory should be pruned");
+    assert!(harness_dir.join("skills/plan-make/SKILL.md").exists());
+}

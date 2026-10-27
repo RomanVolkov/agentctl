@@ -3,7 +3,9 @@ use std::path::PathBuf;
 use serde_json::json;
 
 use crate::model::{ResolvedHarness, Workspace};
-use crate::render::{collect_skill_trees, CopiedTree, RenderedFile, RenderedOutput, Renderer};
+use crate::render::{
+    collect_skill_trees, merge_extra_json, CopiedTree, RenderedFile, RenderedOutput, Renderer,
+};
 
 pub struct ClaudeRenderer;
 
@@ -42,6 +44,10 @@ impl Renderer for ClaudeRenderer {
             config.insert("permissions".to_string(), json!(permissions));
         }
 
+        if let Some(extra) = &harness.extra {
+            merge_extra_json(&mut config, extra, &[]);
+        }
+
         let content = serde_json::to_string_pretty(&serde_json::Value::Object(config))
             .map_err(|e| crate::Error::Render {
                 harness: harness.provider.as_str().to_string(),
@@ -49,20 +55,36 @@ impl Renderer for ClaudeRenderer {
             })?;
         let content = format!("{content}\n");
 
+        let mut files = vec![RenderedFile {
+            relative_path: PathBuf::from("settings.json"),
+            content,
+        }];
+
+        if let Some(sp) = &harness.system_prompt {
+            files.push(RenderedFile {
+                relative_path: PathBuf::from("CLAUDE.md"),
+                content: sp.clone(),
+            });
+        }
+
         let mut trees: Vec<CopiedTree> = collect_skill_trees(workspace, harness);
         let mut output = RenderedOutput {
-            files: vec![RenderedFile {
-                relative_path: PathBuf::from("settings.json"),
-                content,
-            }],
+            files,
             copied_trees: Vec::new(),
             unrendered: Vec::new(),
         };
         output.copied_trees.append(&mut trees);
 
-        warn_if(&mut unrendered, harness.system_prompt.is_some(), "system_prompt");
-        warn_if(&mut unrendered, harness.guardrails.allowed_dirs.is_some(), "allowed_dirs");
-        warn_if(&mut unrendered, harness.max_spend_limit.is_some(), "max_spend_limit");
+        warn_if(
+            &mut unrendered,
+            harness.guardrails.allowed_dirs.is_some(),
+            "allowed_dirs",
+        );
+        warn_if(
+            &mut unrendered,
+            harness.max_spend_limit.is_some(),
+            "max_spend_limit",
+        );
         output.unrendered = unrendered;
 
         Ok(output)
@@ -72,6 +94,8 @@ impl Renderer for ClaudeRenderer {
 fn bash_rule(cmd: &str) -> String {
     if cmd.is_empty() {
         "Bash".to_string()
+    } else if cmd.starts_with("Bash(") || cmd.starts_with("Read(") || cmd.starts_with("Write(") {
+        cmd.to_string()
     } else {
         format!("Bash({cmd})")
     }
@@ -103,21 +127,59 @@ provider = "claude"
 config_path = "~/.claude"
 auto_approve = ["git status", "ls"]
 require_approval = ["git push"]
+
+[harnesses.extra]
+theme = "auto"
+
+[harnesses.extra.hooks]
+SessionStart = [{ matcher = "startup|resume|clear|compact", hooks = [{ type = "command", command = "cat ~/.benjamin-plus/injected-instruction.md" }] }]
 "#
     }
 
     #[test]
     fn renders_claude_settings() {
         let ws = parse_workspace_from_str(workspace_toml()).unwrap();
-        let out = ClaudeRenderer.render(&ws, &ws.resolve_harness(&ws.harnesses[0])).unwrap();
+        let out = ClaudeRenderer
+            .render(&ws, &ws.resolve_harness(&ws.harnesses[0]))
+            .unwrap();
 
         assert_eq!(out.files.len(), 1);
         assert_eq!(out.files[0].relative_path, PathBuf::from("settings.json"));
 
         let parsed: serde_json::Value = serde_json::from_str(&out.files[0].content).unwrap();
         assert_eq!(parsed["model"], json!("claude-sonnet-4"));
-        assert_eq!(parsed["permissions"]["allow"], json!(["Bash(git status)", "Bash(ls)"]));
+        assert_eq!(parsed["theme"], json!("auto"));
+        assert_eq!(
+            parsed["permissions"]["allow"],
+            json!(["Bash(git status)", "Bash(ls)"])
+        );
         assert_eq!(parsed["permissions"]["ask"], json!(["Bash(git push)"]));
+        assert_eq!(
+            parsed["hooks"]["SessionStart"][0]["matcher"],
+            json!("startup|resume|clear|compact")
+        );
+    }
+
+    #[test]
+    fn renders_claude_md_when_system_prompt_set() {
+        let toml = r#"
+[global]
+system_prompt = "Follow Benjamin-Plus."
+
+[[harnesses]]
+provider = "claude"
+config_path = "~/.claude"
+"#;
+        let ws = parse_workspace_from_str(toml).unwrap();
+        let out = ClaudeRenderer
+            .render(&ws, &ws.resolve_harness(&ws.harnesses[0]))
+            .unwrap();
+        let claude_md = out
+            .files
+            .iter()
+            .find(|f| f.relative_path == std::path::Path::new("CLAUDE.md"))
+            .unwrap();
+        assert_eq!(claude_md.content, "Follow Benjamin-Plus.");
     }
 
     #[test]
@@ -128,7 +190,9 @@ provider = "claude"
 config_path = "~/.claude"
 "#;
         let ws = parse_workspace_from_str(toml).unwrap();
-        let out = ClaudeRenderer.render(&ws, &ws.resolve_harness(&ws.harnesses[0])).unwrap();
+        let out = ClaudeRenderer
+            .render(&ws, &ws.resolve_harness(&ws.harnesses[0]))
+            .unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&out.files[0].content).unwrap();
         assert!(parsed.get("permissions").is_none());
     }
@@ -136,15 +200,19 @@ config_path = "~/.claude"
     #[test]
     fn copies_skill_trees() {
         let ws = parse_workspace_from_str(workspace_toml()).unwrap();
-        let out = ClaudeRenderer.render(&ws, &ws.resolve_harness(&ws.harnesses[0])).unwrap();
-        assert_eq!(out.copied_trees[0].target_relative_dir, PathBuf::from("skills/plan-make"));
+        let out = ClaudeRenderer
+            .render(&ws, &ws.resolve_harness(&ws.harnesses[0]))
+            .unwrap();
+        assert_eq!(
+            out.copied_trees[0].target_relative_dir,
+            PathBuf::from("skills/plan-make")
+        );
     }
 
     #[test]
     fn reports_unrendered() {
         let toml = r#"
 [global]
-system_prompt = "x"
 allowed_dirs = ["/src"]
 max_spend_limit = 5.0
 
@@ -153,8 +221,9 @@ provider = "claude"
 config_path = "~/.claude"
 "#;
         let ws = parse_workspace_from_str(toml).unwrap();
-        let out = ClaudeRenderer.render(&ws, &ws.resolve_harness(&ws.harnesses[0])).unwrap();
-        assert!(out.unrendered.contains(&"system_prompt".to_string()));
+        let out = ClaudeRenderer
+            .render(&ws, &ws.resolve_harness(&ws.harnesses[0]))
+            .unwrap();
         assert!(out.unrendered.contains(&"allowed_dirs".to_string()));
         assert!(out.unrendered.contains(&"max_spend_limit".to_string()));
     }

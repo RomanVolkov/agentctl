@@ -55,20 +55,25 @@ impl Renderer for CodexRenderer {
                 message: e.to_string(),
             })?;
 
+        let mut files = vec![RenderedFile {
+            relative_path: PathBuf::from("config.toml"),
+            content,
+        }];
+        if let Some(sp) = &harness.system_prompt {
+            files.push(RenderedFile {
+                relative_path: PathBuf::from("AGENTS.md"),
+                content: sp.clone(),
+            });
+        }
+
         let mut trees: Vec<CopiedTree> = collect_skill_trees(workspace, harness);
         let mut output = RenderedOutput {
-            files: vec![RenderedFile {
-                relative_path: PathBuf::from("config.toml"),
-                content,
-            }],
+            files,
             copied_trees: Vec::new(),
             unrendered: Vec::new(),
         };
         output.copied_trees.append(&mut trees);
 
-        if harness.system_prompt.is_some() {
-            unrendered.push("system_prompt".to_string());
-        }
         if harness.max_spend_limit.is_some() {
             unrendered.push("max_spend_limit".to_string());
         }
@@ -175,7 +180,8 @@ config_path = "~/.codex"
         let ws = parse_workspace_from_str(toml).unwrap();
         let out = CodexRenderer.render(&ws, &ws.resolve_harness(&ws.harnesses[0])).unwrap();
         assert_eq!(out.copied_trees[0].target_relative_dir, PathBuf::from("skills/plan-make"));
-        assert!(out.unrendered.contains(&"system_prompt".to_string()));
+        let agents_md = out.files.iter().find(|f| f.relative_path == std::path::Path::new("AGENTS.md")).unwrap();
+        assert_eq!(agents_md.content, "x");
         assert!(out.unrendered.contains(&"max_spend_limit".to_string()));
     }
 }

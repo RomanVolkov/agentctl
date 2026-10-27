@@ -1,11 +1,11 @@
+use std::path::PathBuf;
+
+use crate::model::{Harness, ResolvedHarness, Skill, Workspace};
+
 pub mod agy;
 pub mod claude;
 pub mod codex;
 pub mod opencode;
-
-use std::path::PathBuf;
-
-use crate::model::{Harness, ResolvedHarness, Skill, Workspace};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct RenderedFile {
@@ -68,6 +68,42 @@ pub fn collect_skill_trees(workspace: &Workspace, resolved: &ResolvedHarness) ->
             _ => None,
         })
         .collect()
+}
+
+pub fn toml_to_json(val: &toml::Value) -> serde_json::Value {
+    match val {
+        toml::Value::String(s) => serde_json::Value::String(s.clone()),
+        toml::Value::Integer(i) => serde_json::json!(*i),
+        toml::Value::Float(f) => serde_json::json!(*f),
+        toml::Value::Boolean(b) => serde_json::Value::Bool(*b),
+        toml::Value::Datetime(dt) => serde_json::Value::String(dt.to_string()),
+        toml::Value::Array(arr) => {
+            serde_json::Value::Array(arr.iter().map(toml_to_json).collect())
+        }
+        toml::Value::Table(tbl) => {
+            let mut map = serde_json::Map::new();
+            for (k, v) in tbl {
+                map.insert(k.clone(), toml_to_json(v));
+            }
+            serde_json::Value::Object(map)
+        }
+    }
+}
+
+pub fn merge_extra_json(
+    target: &mut serde_json::Map<String, serde_json::Value>,
+    extra: &toml::Value,
+    skip_keys: &[&str],
+) {
+    let Some(tbl) = extra.as_table() else {
+        return;
+    };
+    for (k, v) in tbl {
+        if skip_keys.contains(&k.as_str()) {
+            continue;
+        }
+        target.entry(k.clone()).or_insert_with(|| toml_to_json(v));
+    }
 }
 
 fn skill_name(path: &std::path::Path) -> String {
