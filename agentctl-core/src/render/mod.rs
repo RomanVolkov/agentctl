@@ -184,7 +184,19 @@ fn merge_existing_agy(dir: &std::path::Path, rendered: &mut RenderedOutput) {
                 serde_json::from_str(&existing_raw),
                 serde_json::from_str(&settings_file.content),
             ) {
-                if merge_prefixed_permission_rules(&existing_obj, &mut rendered_obj, "mcp(") {
+                let mut changed =
+                    merge_prefixed_permission_rules(&existing_obj, &mut rendered_obj, "mcp(");
+
+                for key in ["trustedWorkspaces"] {
+                    if let Some(val) = existing_obj.get(key) {
+                        if !rendered_obj.contains_key(key) {
+                            rendered_obj.insert(key.to_string(), val.clone());
+                            changed = true;
+                        }
+                    }
+                }
+
+                if changed {
                     if let Ok(s) =
                         serde_json::to_string_pretty(&serde_json::Value::Object(rendered_obj))
                     {
