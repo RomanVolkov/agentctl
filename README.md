@@ -44,7 +44,13 @@ Two rules keep the setup unified:
 
 ### Install
 
-Build from source:
+Build and install locally:
+
+```bash
+make install
+```
+
+Or with `cargo`:
 
 ```bash
 cargo install --path agentctl
