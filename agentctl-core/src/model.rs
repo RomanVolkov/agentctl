@@ -1,5 +1,5 @@
 use serde::Deserialize;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -15,6 +15,7 @@ pub struct Global {
     pub max_spend_limit: Option<f64>,
     pub system_prompt: Option<String>,
     pub skills: Option<Vec<String>>,
+    pub mcp: Option<Vec<String>>,
     pub guardrails: Guardrails,
 }
 
@@ -27,8 +28,15 @@ pub struct Guardrails {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Skill {
-    Mcp { command: String, args: Vec<String> },
-    SkillDir { path: PathBuf },
+    Mcp {
+        command: Option<String>,
+        args: Vec<String>,
+        env: BTreeMap<String, String>,
+        url: Option<String>,
+    },
+    SkillDir {
+        path: PathBuf,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -39,6 +47,7 @@ pub struct Harness {
     pub max_spend_limit: Option<f64>,
     pub system_prompt: Option<String>,
     pub skills: Option<Vec<String>>,
+    pub mcp: Option<Vec<String>>,
     pub guardrails: Guardrails,
     pub extra: Option<toml::Value>,
 }
@@ -52,6 +61,7 @@ pub struct ResolvedHarness {
     pub max_spend_limit: Option<f64>,
     pub system_prompt: Option<String>,
     pub skills: Vec<String>,
+    pub mcp: Vec<String>,
     pub guardrails: Guardrails,
     pub extra: Option<toml::Value>,
 }
@@ -84,6 +94,8 @@ pub struct RawWorkspace {
     #[serde(default)]
     pub skills: HashMap<String, RawSkill>,
     #[serde(default)]
+    pub mcp: HashMap<String, RawMcp>,
+    #[serde(default)]
     pub harnesses: Vec<RawHarness>,
 }
 
@@ -97,6 +109,8 @@ pub struct RawGlobal {
     pub system_prompt: Option<String>,
     #[serde(default)]
     pub skills: Option<Vec<String>>,
+    #[serde(default)]
+    pub mcp: Option<Vec<String>>,
     #[serde(default)]
     pub allowed_dirs: Option<Vec<PathBuf>>,
     #[serde(default)]
@@ -114,7 +128,23 @@ pub struct RawSkill {
     #[serde(default)]
     pub args: Option<Vec<String>>,
     #[serde(default)]
+    pub env: Option<BTreeMap<String, String>>,
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(default)]
     pub path: Option<PathBuf>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RawMcp {
+    #[serde(default)]
+    pub command: Option<String>,
+    #[serde(default)]
+    pub args: Option<Vec<String>>,
+    #[serde(default)]
+    pub env: Option<BTreeMap<String, String>>,
+    #[serde(default)]
+    pub url: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -129,6 +159,8 @@ pub struct RawHarness {
     pub system_prompt: Option<String>,
     #[serde(default)]
     pub skills: Option<Vec<String>>,
+    #[serde(default)]
+    pub mcp: Option<Vec<String>>,
     #[serde(default)]
     pub allowed_dirs: Option<Vec<PathBuf>>,
     #[serde(default)]
@@ -146,6 +178,7 @@ impl RawWorkspace {
             max_spend_limit: self.global.as_ref().and_then(|g| g.max_spend_limit),
             system_prompt: self.global.as_ref().and_then(|g| g.system_prompt.clone()),
             skills: self.global.as_ref().and_then(|g| g.skills.clone()),
+            mcp: self.global.as_ref().and_then(|g| g.mcp.clone()),
             guardrails: Guardrails {
                 allowed_dirs: self.global.as_ref().and_then(|g| g.allowed_dirs.clone()),
                 auto_approve: self.global.as_ref().and_then(|g| g.auto_approve.clone()),
@@ -156,6 +189,18 @@ impl RawWorkspace {
         let mut skills = HashMap::new();
         for (name, raw) in self.skills {
             let skill = raw.into_skill()?;
+            skills.insert(name, skill);
+        }
+        for (name, raw_mcp) in self.mcp {
+            let skill = RawSkill {
+                kind: "mcp".to_string(),
+                command: raw_mcp.command,
+                args: raw_mcp.args,
+                env: raw_mcp.env,
+                url: raw_mcp.url,
+                path: None,
+            }
+            .into_skill()?;
             skills.insert(name, skill);
         }
 
@@ -176,16 +221,35 @@ impl RawSkill {
     fn into_skill(self) -> Result<Skill, crate::Error> {
         match self.kind.as_str() {
             "mcp" => {
-                let command = self
-                    .command
-                    .ok_or_else(|| crate::Error::MissingField("skills.X.command".into()))?;
-                if command.trim().is_empty() {
-                    return Err(crate::Error::InvalidMcpCommand);
+                if let Some(url) = self.url {
+                    if url.trim().is_empty() {
+                        return Err(crate::Error::InvalidMcpCommand);
+                    }
+                    if let Some(cmd) = &self.command {
+                        if cmd.trim().is_empty() {
+                            return Err(crate::Error::InvalidMcpCommand);
+                        }
+                    }
+                    Ok(Skill::Mcp {
+                        command: self.command,
+                        args: self.args.unwrap_or_default(),
+                        env: self.env.unwrap_or_default(),
+                        url: Some(url),
+                    })
+                } else {
+                    let command = self
+                        .command
+                        .ok_or_else(|| crate::Error::MissingField("skills.X.command".into()))?;
+                    if command.trim().is_empty() {
+                        return Err(crate::Error::InvalidMcpCommand);
+                    }
+                    Ok(Skill::Mcp {
+                        command: Some(command),
+                        args: self.args.unwrap_or_default(),
+                        env: self.env.unwrap_or_default(),
+                        url: None,
+                    })
                 }
-                Ok(Skill::Mcp {
-                    command,
-                    args: self.args.unwrap_or_default(),
-                })
             }
             "skill" => {
                 let path = self
@@ -219,6 +283,14 @@ impl RawHarness {
             }
         }
 
+        if let Some(mcp_names) = &self.mcp {
+            for name in mcp_names {
+                if !skills.contains_key(name) {
+                    return Err(crate::Error::UnknownSkill(name.clone()));
+                }
+            }
+        }
+
         Ok(Harness {
             provider,
             config_path: self.config_path,
@@ -226,6 +298,7 @@ impl RawHarness {
             max_spend_limit: self.max_spend_limit,
             system_prompt: self.system_prompt,
             skills: self.skills,
+            mcp: self.mcp,
             guardrails: Guardrails {
                 allowed_dirs: self.allowed_dirs,
                 auto_approve: self.auto_approve,
@@ -254,6 +327,11 @@ impl Workspace {
                 .clone()
                 .or_else(|| self.global.skills.clone())
                 .unwrap_or_default(),
+            mcp: harness
+                .mcp
+                .clone()
+                .or_else(|| self.global.mcp.clone())
+                .unwrap_or_default(),
             guardrails: Guardrails {
                 allowed_dirs: harness
                     .guardrails
@@ -277,6 +355,11 @@ impl Workspace {
 
     pub fn validate_refs(&self) -> Result<(), crate::Error> {
         for name in self.global.skills.iter().flatten() {
+            if !self.skills.contains_key(name) {
+                return Err(crate::Error::UnknownSkill(name.clone()));
+            }
+        }
+        for name in self.global.mcp.iter().flatten() {
             if !self.skills.contains_key(name) {
                 return Err(crate::Error::UnknownSkill(name.clone()));
             }

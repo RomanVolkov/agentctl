@@ -4,8 +4,8 @@ use serde_json::json;
 
 use crate::model::{ResolvedHarness, Workspace};
 use crate::render::{
-    collect_skill_trees, merge_extra_json, toml_to_json, CopiedTree, RenderedFile, RenderedOutput,
-    Renderer,
+    collect_mcp_servers, collect_skill_trees, merge_extra_json, toml_to_json, CopiedTree,
+    RenderedFile, RenderedOutput, Renderer,
 };
 
 pub struct AgyRenderer;
@@ -29,7 +29,12 @@ impl Renderer for AgyRenderer {
             merge_extra_json(
                 &mut map,
                 extra,
-                &["allowNonWorkspaceAccess", "enableTelemetry", "hooks"],
+                &[
+                    "allowNonWorkspaceAccess",
+                    "enableTelemetry",
+                    "hooks",
+                    "mcpServers",
+                ],
             );
         }
 
@@ -86,6 +91,47 @@ impl Renderer for AgyRenderer {
             files.push(RenderedFile {
                 relative_path: PathBuf::from("hooks.json"),
                 content: format!("{hooks_json}\n"),
+            });
+        }
+
+        let mut mcp_servers = serde_json::Map::new();
+        for mcp in collect_mcp_servers(workspace, harness) {
+            let mut entry = serde_json::Map::new();
+            if let Some(url) = mcp.url {
+                entry.insert("url".to_string(), json!(url));
+            } else if let Some(cmd) = mcp.command {
+                entry.insert("command".to_string(), json!(cmd));
+                if !mcp.args.is_empty() {
+                    entry.insert("args".to_string(), json!(mcp.args));
+                }
+            }
+            if !mcp.env.is_empty() {
+                entry.insert("env".to_string(), json!(mcp.env));
+            }
+            mcp_servers.insert(mcp.name, serde_json::Value::Object(entry));
+        }
+        if let Some(extra_mcp) = harness
+            .extra
+            .as_ref()
+            .and_then(|e| e.get("mcpServers"))
+            .and_then(|v| v.as_table())
+        {
+            for (k, v) in extra_mcp {
+                mcp_servers
+                    .entry(k.clone())
+                    .or_insert_with(|| toml_to_json(v));
+            }
+        }
+        if !mcp_servers.is_empty() {
+            let mcp_doc = json!({ "mcpServers": mcp_servers });
+            let mcp_json =
+                serde_json::to_string_pretty(&mcp_doc).map_err(|e| crate::Error::Render {
+                    harness: harness.provider.as_str().to_string(),
+                    message: e.to_string(),
+                })?;
+            files.push(RenderedFile {
+                relative_path: PathBuf::from("mcp_config.json"),
+                content: format!("{mcp_json}\n"),
             });
         }
 

@@ -238,6 +238,7 @@ fn env_vars_are_expanded_in_mcp_arguments() {
 type = "mcp"
 command = "env"
 args = ["GITHUB_TOKEN=${{AGENTCTL_TEST_API_KEY}}", "npx", "-y", "server"]
+env = {{ API_TOKEN = "${{AGENTCTL_TEST_API_KEY}}" }}
 
 [[harnesses]]
 provider = "agy"
@@ -256,6 +257,184 @@ config_path = "{}"
         .output()
         .unwrap();
     assert!(out.status.success(), "apply failed: {}", String::from_utf8_lossy(&out.stderr));
+
+    let mcp_cfg = std::fs::read_to_string(harness_dir.join("mcp_config.json")).unwrap();
+    assert!(mcp_cfg.contains("GITHUB_TOKEN=secret-123"));
+    assert!(mcp_cfg.contains("\"API_TOKEN\": \"secret-123\""));
+}
+
+#[test]
+fn preserves_existing_unmanaged_mcps_and_merges_declarative_mcps() {
+    let dir = tempfile::tempdir().unwrap();
+    let opc_dir = dir.path().join("opencode");
+    let agy_dir = dir.path().join("agy");
+    let claude_dir = dir.path().join(".claude");
+    let codex_dir = dir.path().join("codex");
+
+    // Pre-populate unmanaged work MCPs on disk across all 4 harnesses
+    write(
+        &opc_dir,
+        "opencode.jsonc",
+        r#"{
+  "mcp": {
+    "work-jira": {
+      "type": "local",
+      "command": ["npx", "jira-mcp"]
+    }
+  },
+  "provider": {
+    "custom": { "name": "corp" }
+  }
+}
+"#,
+    );
+    write(
+        &agy_dir,
+        "mcp_config.json",
+        r#"{
+  "mcpServers": {
+    "work-jira": {
+      "command": "npx",
+      "args": ["jira-mcp"]
+    }
+  }
+}
+"#,
+    );
+    write(
+        &claude_dir,
+        "settings.json",
+        r#"{
+  "enabledMcpjsonServers": ["work-jira"],
+  "permissions": {
+    "allow": ["mcp__work_jira__search"]
+  }
+}
+"#,
+    );
+    write(
+        dir.path(),
+        ".claude.json",
+        r#"{
+  "userID": "user-123",
+  "mcpServers": {
+    "work-jira": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["jira-mcp"]
+    }
+  }
+}
+"#,
+    );
+    write(
+        &codex_dir,
+        "config.toml",
+        r#"[mcp_servers.work-jira]
+command = "npx"
+args = ["jira-mcp"]
+"#,
+    );
+
+    write(
+        dir.path(),
+        "workspace.toml",
+        &format!(
+            r#"
+[global]
+model = "claude-sonnet-4"
+mcp = ["github", "sentry"]
+auto_approve = ["git status"]
+
+[mcp.github]
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-github"]
+
+[mcp.sentry]
+url = "https://mcp.sentry.dev/mcp"
+
+[[harnesses]]
+provider = "opencode"
+config_path = "{}"
+
+[[harnesses]]
+provider = "agy"
+config_path = "{}"
+
+[[harnesses]]
+provider = "claude"
+config_path = "{}"
+
+[[harnesses]]
+provider = "codex"
+config_path = "{}"
+"#,
+            opc_dir.display(),
+            agy_dir.display(),
+            claude_dir.display(),
+            codex_dir.display(),
+        ),
+    );
+
+    let out = Command::new(bin())
+        .arg("apply")
+        .arg("--yes")
+        .arg("-c")
+        .arg(dir.path().join("workspace.toml"))
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "apply failed: {}", String::from_utf8_lossy(&out.stderr));
+
+    // OpenCode: has both declarative (github, sentry) and existing (work-jira) + provider
+    let opc: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(opc_dir.join("opencode.jsonc")).unwrap())
+            .unwrap();
+    assert_eq!(opc["mcp"]["work-jira"]["command"], serde_json::json!(["npx", "jira-mcp"]));
+    assert_eq!(
+        opc["mcp"]["github"]["command"],
+        serde_json::json!(["npx", "-y", "@modelcontextprotocol/server-github"])
+    );
+    assert_eq!(opc["mcp"]["sentry"]["type"], serde_json::json!("remote"));
+    assert_eq!(opc["provider"]["custom"]["name"], serde_json::json!("corp"));
+
+    // Agy: has both declarative and existing in mcp_config.json
+    let agy_mcp: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(agy_dir.join("mcp_config.json")).unwrap())
+            .unwrap();
+    assert!(agy_mcp["mcpServers"]["work-jira"].is_object());
+    assert!(agy_mcp["mcpServers"]["github"].is_object());
+    assert_eq!(
+        agy_mcp["mcpServers"]["sentry"]["url"],
+        serde_json::json!("https://mcp.sentry.dev/mcp")
+    );
+
+    // Claude: settings.json preserves enabledMcpjsonServers and mcp__work_jira__search permission,
+    // and .claude.json preserves userID + work-jira while adding github and sentry
+    let claude_settings: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(claude_dir.join("settings.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        claude_settings["enabledMcpjsonServers"],
+        serde_json::json!(["work-jira"])
+    );
+    let allow = claude_settings["permissions"]["allow"].as_array().unwrap();
+    assert!(allow.contains(&serde_json::json!("Bash(git status)")));
+    assert!(allow.contains(&serde_json::json!("mcp__work_jira__search")));
+
+    let claude_json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.path().join(".claude.json")).unwrap())
+            .unwrap();
+    assert_eq!(claude_json["userID"], serde_json::json!("user-123"));
+    assert!(claude_json["mcpServers"]["work-jira"].is_object());
+    assert_eq!(claude_json["mcpServers"]["github"]["type"], serde_json::json!("stdio"));
+    assert_eq!(claude_json["mcpServers"]["sentry"]["type"], serde_json::json!("http"));
+
+    // Codex: config.toml has both work-jira and github/sentry
+    let codex_cfg = std::fs::read_to_string(codex_dir.join("config.toml")).unwrap();
+    assert!(codex_cfg.contains("[mcp_servers.work-jira]"));
+    assert!(codex_cfg.contains("[mcp_servers.github]"));
+    assert!(codex_cfg.contains("[mcp_servers.sentry]"));
+    assert!(codex_cfg.contains("url = \"https://mcp.sentry.dev/mcp\""));
 }
 
 #[test]

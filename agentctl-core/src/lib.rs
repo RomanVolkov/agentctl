@@ -9,7 +9,9 @@ pub use expand::{expand_env, expand_workspace};
 pub use model::{Guardrails, Harness, Provider, ResolvedHarness, Skill, Workspace};
 pub use parse::parse_workspace_file;
 pub use parse::parse_workspace_from_str;
-pub use render::{render, RenderedFile, RenderedOutput, Renderer};
+pub use render::{
+    merge_existing_harness_files, render, RenderedFile, RenderedOutput, Renderer,
+};
 
 pub fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")

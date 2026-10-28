@@ -21,7 +21,8 @@ pub fn render_all(
     for harness in &workspace.harnesses {
         let rendered = agentctl_core::render(workspace, harness)?;
         let dir = expand_dir(&harness.config_path)?;
-        let rendered = resolve_tree_sources(rendered, base_dir);
+        let mut rendered = resolve_tree_sources(rendered, base_dir);
+        agentctl_core::merge_existing_harness_files(harness.provider, &dir, &mut rendered);
         out.push(HarnessRender {
             harness: harness.clone(),
             rendered,

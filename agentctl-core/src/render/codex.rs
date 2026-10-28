@@ -1,7 +1,9 @@
 use std::path::PathBuf;
 
 use crate::model::{ResolvedHarness, Workspace};
-use crate::render::{collect_skill_trees, CopiedTree, RenderedFile, RenderedOutput, Renderer};
+use crate::render::{
+    collect_mcp_servers, collect_skill_trees, CopiedTree, RenderedFile, RenderedOutput, Renderer,
+};
 
 pub struct CodexRenderer;
 
@@ -43,6 +45,45 @@ impl Renderer for CodexRenderer {
                 );
                 unrendered.push(COARSE_DIRS.to_string());
             }
+        }
+
+        let mut mcp_servers = toml::map::Map::new();
+        for mcp in collect_mcp_servers(workspace, harness) {
+            let mut entry = toml::map::Map::new();
+            if let Some(url) = mcp.url {
+                entry.insert("url".into(), toml::Value::String(url));
+            } else if let Some(cmd) = mcp.command {
+                entry.insert("command".into(), toml::Value::String(cmd));
+                if !mcp.args.is_empty() {
+                    entry.insert(
+                        "args".into(),
+                        toml::Value::Array(
+                            mcp.args.into_iter().map(toml::Value::String).collect(),
+                        ),
+                    );
+                }
+            }
+            if !mcp.env.is_empty() {
+                let mut env_tbl = toml::map::Map::new();
+                for (k, v) in mcp.env {
+                    env_tbl.insert(k, toml::Value::String(v));
+                }
+                entry.insert("env".into(), toml::Value::Table(env_tbl));
+            }
+            mcp_servers.insert(mcp.name, toml::Value::Table(entry));
+        }
+        if let Some(extra_mcp) = harness
+            .extra
+            .as_ref()
+            .and_then(|e| e.get("mcp_servers"))
+            .and_then(|v| v.as_table())
+        {
+            for (k, v) in extra_mcp {
+                mcp_servers.entry(k.clone()).or_insert_with(|| v.clone());
+            }
+        }
+        if !mcp_servers.is_empty() {
+            table.insert("mcp_servers".into(), toml::Value::Table(mcp_servers));
         }
 
         if let Some(extra) = &harness.extra {

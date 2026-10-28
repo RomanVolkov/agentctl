@@ -3,7 +3,10 @@ use std::path::PathBuf;
 use serde_json::json;
 
 use crate::model::{ResolvedHarness, Workspace};
-use crate::render::{collect_skill_trees, CopiedTree, RenderedFile, RenderedOutput, Renderer};
+use crate::render::{
+    collect_mcp_servers, collect_skill_trees, merge_extra_json, toml_to_json, CopiedTree,
+    RenderedFile, RenderedOutput, Renderer,
+};
 
 pub struct OpenCodeRenderer;
 
@@ -40,9 +43,45 @@ impl Renderer for OpenCodeRenderer {
             if !disabled.is_empty() {
                 config.insert("disabled_providers".to_string(), json!(disabled));
             }
+            merge_extra_json(
+                &mut config,
+                extra,
+                &["instructions", "disabled_providers", "mcp"],
+            );
         }
         if !instructions.is_empty() {
             config.insert("instructions".to_string(), json!(instructions));
+        }
+
+        let mut mcp_map = serde_json::Map::new();
+        for mcp in collect_mcp_servers(workspace, harness) {
+            let mut entry = serde_json::Map::new();
+            if let Some(url) = mcp.url {
+                entry.insert("type".to_string(), json!("remote"));
+                entry.insert("url".to_string(), json!(url));
+            } else if let Some(cmd) = mcp.command {
+                let mut cmd_vec = vec![cmd];
+                cmd_vec.extend(mcp.args);
+                entry.insert("type".to_string(), json!("local"));
+                entry.insert("command".to_string(), json!(cmd_vec));
+            }
+            if !mcp.env.is_empty() {
+                entry.insert("environment".to_string(), json!(mcp.env));
+            }
+            mcp_map.insert(mcp.name, serde_json::Value::Object(entry));
+        }
+        if let Some(extra_mcp) = harness
+            .extra
+            .as_ref()
+            .and_then(|e| e.get("mcp"))
+            .and_then(|v| v.as_table())
+        {
+            for (k, v) in extra_mcp {
+                mcp_map.entry(k.clone()).or_insert_with(|| toml_to_json(v));
+            }
+        }
+        if !mcp_map.is_empty() {
+            config.insert("mcp".to_string(), serde_json::Value::Object(mcp_map));
         }
 
         let content = serde_json::to_string_pretty(&serde_json::Value::Object(config))

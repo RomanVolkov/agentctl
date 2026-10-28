@@ -48,10 +48,24 @@ pub fn expand_env(input: &str) -> String {
 pub fn expand_workspace(ws: &Workspace) -> Workspace {
     let mut ws = ws.clone();
     for skill in ws.skills.values_mut() {
-        if let Skill::Mcp { command, args } = skill {
-            *command = expand_env(command);
+        if let Skill::Mcp {
+            command,
+            args,
+            env,
+            url,
+        } = skill
+        {
+            if let Some(cmd) = command {
+                *cmd = expand_env(cmd);
+            }
             for arg in args {
                 *arg = expand_env(arg);
+            }
+            for val in env.values_mut() {
+                *val = expand_env(val);
+            }
+            if let Some(u) = url {
+                *u = expand_env(u);
             }
         }
     }
