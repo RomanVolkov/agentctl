@@ -342,12 +342,14 @@ impl Workspace {
                     .guardrails
                     .auto_approve
                     .clone()
-                    .or_else(|| self.global.guardrails.auto_approve.clone()),
+                    .or_else(|| self.global.guardrails.auto_approve.clone())
+                    .map(|rules| expand_skills_dir(rules, &harness.config_path)),
                 require_approval: harness
                     .guardrails
                     .require_approval
                     .clone()
-                    .or_else(|| self.global.guardrails.require_approval.clone()),
+                    .or_else(|| self.global.guardrails.require_approval.clone())
+                    .map(|rules| expand_skills_dir(rules, &harness.config_path)),
             },
             extra: harness.extra.clone(),
         }
@@ -366,4 +368,20 @@ impl Workspace {
         }
         Ok(())
     }
+}
+/// Expands `${SKILLS_DIR}` in guardrail rules to the harness's absolute skills directory.
+fn expand_skills_dir(rules: Vec<String>, config_path: &std::path::Path) -> Vec<String> {
+    let raw = config_path.to_string_lossy();
+    let base = match raw.strip_prefix("~/") {
+        Some(rest) => match std::env::var("HOME") {
+            Ok(home) => format!("{home}/{rest}"),
+            Err(_) => raw.to_string(),
+        },
+        None => raw.to_string(),
+    };
+    let skills = format!("{}/skills", base.trim_end_matches('/'));
+    rules
+        .into_iter()
+        .map(|r| r.replace("${SKILLS_DIR}", &skills))
+        .collect()
 }
